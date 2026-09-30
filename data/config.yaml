@@ -1,0 +1,110 @@
+# Walk-forward threshold search methodology
+# tennis-research / data/config.yaml
+# Updated: 2026-09-30
+
+data_source:
+  raw_file: data/raw/CRITERIA_DATA.xlsx
+  season_2026_file: data/raw/ATP2026.xlsx     # sheets: Sheet1 (all), clay
+  excluded_sheets: [US_hard, WE_hard]         # duplicated by *_feb/*_oct/*_summer splits
+  sheets_used: 24
+  note: >
+    US_hard = US_hard_feb + US_hard_summer, WE_hard = WE_hard_feb + WE_hard_oct
+    (exact match on Date+PL1+PL2, zero overlap, zero remainder).
+
+win2_formula:
+  description: Flat-stake profit for betting on player 2 (PL2).
+  rule:
+    win_eq_0: "win2 = +100"                 # player 2 won
+    win_eq_1: "win2 = -100 / (k2 - 1)"      # player 1 won
+  win1_symmetric:
+    win_eq_1: "win1 = +100"
+    win_eq_0: "win1 = -100 / (k1 - 1)"
+
+threshold_search:
+  min_matches_under_threshold: 300
+  matches_split: 800                        # >800: step 3, <=800: step 4
+  criteria_columns_F_to_P:                  # columns F..P inclusive
+    [Total rate, Surf p, 2m point, Surf1, Surf2, Total1, Total2, Poi_s1, Poi_s2, Poi_t1, Poi_t2]
+  steps:
+    1: "sort by k2, cumulative win2 over unique k2 values"
+    2: "k2 threshold = argmax cumulative win2 with >= 300 matches under threshold (k2 <= t)"
+    3: "matches under threshold > 800 -> 2nd criterion (col F-P, '<' or '>') inside k2-filtered matches"
+    4: "matches <= 800 -> whole pool, pair (k2 <= t2) + (col F-P) maximizing win2"
+    5: "3rd filter on matches after step 3/4: Surf p < x (x maximizes win2, >= 300 matches)"
+  strictness: "k2 in filters 1-2 is '<='; in bet-based filter and BEST_BET_CRIT k2 is strict '<'"
+  windows:
+    - {label: "до 2020 вкл",   start_year: null, end_year: 2020}
+    - {label: "до 2021 вкл",   start_year: null, end_year: 2021}
+    - {label: "2016-2022 вкл", start_year: 2016, end_year: 2022}
+    - {label: "2017-2023 вкл", start_year: 2017, end_year: 2023}
+    - {label: "2018-2024 вкл", start_year: 2018, end_year: 2024}
+    - {label: "2019-2025 вкл", start_year: 2019, end_year: 2025}
+
+no_leak_rule:
+  description: >
+    Year Y is evaluated with thresholds from the window ending at Y-1 only.
+    Example: year=2024 -> window "2017-2023 вкл".
+  first_evaluated_year: 2021
+  year_to_window: {2021: 2020, 2022: 2021, 2023: 2022, 2024: 2023, 2025: 2024, 2026: 2025}
+
+filter_levels:
+  F1: "k2 <= Threshold_k2"
+  F2: "k2 <= k2_limit AND 2nd criterion (step 3/4)"
+  F3: "F2 AND Surf p < x"
+
+bet_filter:                                   # filter chosen on BETS (test), not on train
+  description: >
+    Bets (curr_games) = matches of season Y that passed F1/F2/F3 of window Y-1.
+    After each season the bets are pooled from first_year up to that season and every
+    criterion (columns F-P both sides, k2 strict '<') is scanned. The filter chosen on
+    the bets of previous seasons is applied to the bets of the NEXT season and saved in
+    sheet curr_games_4filter. One filter per PROFILE (CLAY / HARD_GRASS), NOT per group.
+    The 2021 bets have no history and are not filtered. Works on F1, F2 and F3 bets.
+  first_year: 2021
+  min_bets: 100
+  scope: per_profile                          # CLAY | HARD_GRASS
+  rule: {default: k2, options: [k2, rank]}    # k2: best strict k2 <; rank: row of the ranked list
+  ranked_list_file: "BEST_BET_CRIT_{profile}.xlsx"  # sheets CLAY2021-2021, CLAY2021-2022, ...
+  ranked_list_columns: [column, op, threshold, matches, sum_win2, roi, pool_matches, pool_sum]
+
+groups:
+  clay:
+    - {name: SAm_Eu_Clay, sheets: [SAm_clay, Eu_Clay]}
+    - {name: Masters_RG,  sheets: [Madrid, Monte-Carlo, Rome, RG_Q, RG]}
+  hard_grass:
+    - {name: ATP_hard_Masters, sheets: [WE_hard_feb, WE_hard_oct, US_hard_feb, US_hard_summer, Aus, Chn, US1000_march, US1000_aug, Chn_masters, Paris]}
+    - {name: GrandSlam_hard_grass, sheets: [AO, AO_Q, US_open, US_Q, Wimbledon, Wim_Q]}   # Grand Slam qualifying belongs to the Slam
+    - {name: ATP_grass, sheets: [grass]}
+
+season_2026:
+  odds_column: op2                            # k2 = op2 (opening odds); last2 not used
+  column_map: {"Poi_s rate": "Surf p", "poi_2m rate": "2m point"}
+  skipped_tournaments: [Doha, Dubai, Acapulco, "Hong Kong ATP", "Los Cabos"]   # not in historical sheets
+  tournament_to_sheet:
+    clay: {SAm_clay: [Buenos Aires, Rio de Janeiro, Santiago], Madrid: [Madrid], Monte-Carlo: [Monte Carlo], Rome: [Rome], RG_Q: ["French Open (mastersQ)"], RG: ["French Open (GS)"]}
+    hard_grass:
+      WE_hard_feb: [Rotterdam, Montpellier]
+      US_hard_feb: [Delray Beach, Dallas]
+      US_hard_summer: [Washington, Winston Salem]
+      Aus: [Auckland, Adelaide, Brisbane]
+      US1000_march: [Indian Wells, Miami]
+      US1000_aug: [Cincinnati, Montreal]
+      AO: ["Australian Open (GS)"]
+      AO_Q: ["Australian Open (mastersQ)"]
+      US_open: ["US Open (GS)"]
+      US_Q: ["US Open (mastersQ)"]
+      Wimbledon: ["Wimbledon (GS)"]
+      Wim_Q: ["Wimbledon (mastersQ)"]
+      grass: [Eastbourne, Halle, Hertogenbosch, Mallorca, "Queen's Club", Stuttgart]
+    other_clay_eu: "any other clay tournament -> Eu_Clay (Houston appears only in Sheet1, not in the clay sheet)"
+  data_until: "2026-09-13"
+
+output_tables:
+  "{CLAY|HARD_GRASS}_{1|2|3}filters.xlsx":
+    Thresholds: "groups x 6 windows: k2 threshold, mode, 2nd criterion, 3rd value, sums"
+    Results_by_tourn_sheet: "sheet x year 2021-2025: prev.seasons (sum win2 over the WHOLE training window, filtered), curr.season, threshold, counts"
+    curr_games: "all bets of seasons 2021-2025 that passed the filters"
+  "{bets_file}_with_4filter.xlsx":
+    curr_games: "input bets"
+    curr_games_4filter: "bets of 2022+ filtered by the bet-based criterion from previous seasons"
+  "BEST_BET_CRIT_{profile}.xlsx": "ranked filters by cumulative bets (one sheet per window) + applied_bet_filter + walk_forward_check"
